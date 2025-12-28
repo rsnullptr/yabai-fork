@@ -1,4 +1,5 @@
 #include "sa.h"
+#include <errno.h>
 
 extern int csr_get_active_config(uint32_t *config);
 #define CSR_ALLOW_UNRESTRICTED_FS 0x02
@@ -428,13 +429,27 @@ static bool scripting_addition_send_bytes(char *bytes, int length)
 
     if (socket_open(&sockfd)) {
         if (socket_connect(sockfd, g_sa_socket_file)) {
-            if (send(sockfd, bytes, length, 0) != -1) {
-                recv(sockfd, &dummy, 1, 0);
-                result = true;
+            ssize_t sent = send(sockfd, bytes, length, 0);
+            if (sent != -1) {
+                ssize_t recvd = recv(sockfd, &dummy, 1, 0);
+                if (recvd > 0) {
+                    result = true;
+                } else if (recvd == 0) {
+                    // Connection closed by server (normal for operations without explicit response)
+                    result = true;
+                } else {
+                    warn("yabai-sa-client: recv failed with errno=%d\n", errno);
+                }
+            } else {
+                warn("yabai-sa-client: send failed with errno=%d\n", errno);
             }
+        } else {
+            warn("yabai-sa-client: socket_connect failed to %s\n", g_sa_socket_file);
         }
 
         socket_close(sockfd);
+    } else {
+        warn("yabai-sa-client: socket_open failed\n");
     }
 
     return result;
@@ -456,9 +471,15 @@ bool scripting_addition_create_space(uint64_t sid)
 
 bool scripting_addition_destroy_space(uint64_t sid)
 {
+    debug("yabai-sa-client: scripting_addition_destroy_space called with sid=%llu\n", sid);
     sa_payload_init();
     pack(sid);
-    return sa_payload_send(SA_OPCODE_SPACE_DESTROY);
+    // Expand macro manually to capture result
+    *(int16_t*)bytes = length-sizeof(length);
+    bytes[sizeof(length)] = SA_OPCODE_SPACE_DESTROY;
+    bool result = scripting_addition_send_bytes(bytes, length);
+    debug("yabai-sa-client: scripting_addition_destroy_space result=%d\n", result);
+    return result;
 }
 
 bool scripting_addition_move_space_to_display(uint64_t src_sid, uint64_t dst_sid, uint64_t src_prev_sid, bool focus)

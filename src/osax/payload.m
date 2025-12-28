@@ -516,28 +516,81 @@ static void do_space_move(char *message)
 typedef void (*remove_space_call)(id space, id display_space, id dock_spaces, uint64_t space_id1, uint64_t space_id2);
 static void do_space_destroy(char *message)
 {
-    if (dock_spaces == nil || remove_space_fp == 0) return;
+    FILE *f = fopen("/tmp/yabai-sa-debug.log", "a");
+    if (f) {
+        fprintf(f, "[yabai-sa] do_space_destroy called\n");
+        fflush(f);
+    }
+    NSLog(@"[yabai-sa] do_space_destroy called");
+
+    if (dock_spaces == nil) {
+        if (f) fprintf(f, "[yabai-sa] do_space_destroy: dock_spaces is nil, aborting\n");
+        NSLog(@"[yabai-sa] do_space_destroy: dock_spaces is nil, aborting");
+        if (f) fclose(f);
+        return;
+    }
+
+    if (remove_space_fp == 0) {
+        if (f) fprintf(f, "[yabai-sa] do_space_destroy: remove_space_fp is 0, aborting\n");
+        NSLog(@"[yabai-sa] do_space_destroy: remove_space_fp is 0, aborting");
+        if (f) fclose(f);
+        return;
+    }
 
     uint64_t space_id;
     unpack(space_id);
+    if (f) fprintf(f, "[yabai-sa] do_space_destroy: attempting to destroy space_id=%llu\n", space_id);
+    NSLog(@"[yabai-sa] do_space_destroy: attempting to destroy space_id=%llu", space_id);
 
     CFStringRef display_uuid = SLSCopyManagedDisplayForSpace(SLSMainConnectionID(), space_id);
+    if (f) fprintf(f, "[yabai-sa] do_space_destroy: got display_uuid\n");
+    NSLog(@"[yabai-sa] do_space_destroy: display_uuid=%@", display_uuid);
+
     uint64_t active_space_id = SLSManagedDisplayGetCurrentSpace(SLSMainConnectionID(), display_uuid);
+    if (f) fprintf(f, "[yabai-sa] do_space_destroy: active_space_id=%llu\n", active_space_id);
+    NSLog(@"[yabai-sa] do_space_destroy: active_space_id=%llu", active_space_id);
 
     id space = space_for_display_with_id(display_uuid, space_id);
     id display_space = display_space_for_display_uuid(display_uuid);
+    if (f) fprintf(f, "[yabai-sa] do_space_destroy: space=%p, display_space=%p\n", space, display_space);
+    NSLog(@"[yabai-sa] do_space_destroy: space=%p, display_space=%p", space, display_space);
+
+    if (space == nil) {
+        if (f) fprintf(f, "[yabai-sa] do_space_destroy: space is nil, aborting\n");
+        NSLog(@"[yabai-sa] do_space_destroy: space is nil for space_id=%llu, aborting", space_id);
+        if (f) fclose(f);
+        CFRelease(display_uuid);
+        return;
+    }
+
+    if (display_space == nil) {
+        if (f) fprintf(f, "[yabai-sa] do_space_destroy: display_space is nil, aborting\n");
+        NSLog(@"[yabai-sa] do_space_destroy: display_space is nil, aborting");
+        if (f) fclose(f);
+        CFRelease(display_uuid);
+        return;
+    }
 
     dispatch_sync(dispatch_get_main_queue(), ^{
+        if (f) fprintf(f, "[yabai-sa] do_space_destroy: calling remove_space_fp\n");
+        NSLog(@"[yabai-sa] do_space_destroy: calling remove_space_fp");
         ((remove_space_call) remove_space_fp)(space, display_space, dock_spaces, space_id, space_id);
+        if (f) fprintf(f, "[yabai-sa] do_space_destroy: remove_space_fp returned\n");
+        NSLog(@"[yabai-sa] do_space_destroy: remove_space_fp returned");
     });
 
     if (active_space_id == space_id) {
         uint64_t dest_space_id = SLSManagedDisplayGetCurrentSpace(SLSMainConnectionID(), display_uuid);
         id dest_space = space_for_display_with_id(display_uuid, dest_space_id);
         set_ivar_value(display_space, "_currentSpace", [dest_space retain]);
+        if (f) fprintf(f, "[yabai-sa] do_space_destroy: updated _currentSpace\n");
+        NSLog(@"[yabai-sa] do_space_destroy: updated _currentSpace to dest_space_id=%llu", dest_space_id);
     }
 
+    if (f) fprintf(f, "[yabai-sa] do_space_destroy: completed successfully\n");
+    if (f) fclose(f);
     CFRelease(display_uuid);
+    NSLog(@"[yabai-sa] do_space_destroy: completed successfully");
 }
 
 static void do_space_create(char *message)
@@ -969,6 +1022,7 @@ static void handle_message(int sockfd, char *message)
         do_space_create(message);
     } break;
     case SA_OPCODE_SPACE_DESTROY: {
+        NSLog(@"[yabai-sa] received SA_OPCODE_SPACE_DESTROY");
         do_space_destroy(message);
     } break;
     case SA_OPCODE_SPACE_MOVE: {
